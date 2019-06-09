@@ -45,5 +45,7 @@ func (v *view) PointerMove(p Pointer) {}
 func (v *view) PointerUp(p Pointer)   {}
 
 func (v *view) Redraw() {
-	v.parent.Redraw()
+	if v.parent != nil {
+		v.parent.Redraw()
+	}
 }
