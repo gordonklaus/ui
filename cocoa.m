@@ -33,7 +33,7 @@ void flushContext(uintptr_t context) {
 
 	NSOpenGLContext *ctx = self.openGLContext;
 
-	GLint swapInt = 1;
+	GLint swapInt = 0;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	[ctx setValues:&swapInt forParameter:NSOpenGLCPSwapInterval];
