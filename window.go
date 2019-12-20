@@ -17,6 +17,7 @@ type Window struct {
 	w             uintptr
 	theView       View
 	gfx           *Graphics
+	do            chan func()
 	sizeEvents    chan sizeEvent
 	drawEvents    chan drawEvent
 	pointerEvents chan pointerEvent
@@ -39,6 +40,7 @@ func NewWindow(size Size, v View) (*Window, error) {
 	w := &Window{
 		w:             newWindow(size),
 		theView:       v,
+		do:            make(chan func()),
 		sizeEvents:    make(chan sizeEvent, 1),
 		drawEvents:    make(chan drawEvent, 1),
 		pointerEvents: make(chan pointerEvent, 1),
@@ -51,6 +53,15 @@ func NewWindow(size Size, v View) (*Window, error) {
 	windowsMu.Unlock()
 
 	return w, nil
+}
+
+func (w *Window) Do(f func()) {
+	done := make(chan struct{})
+	w.do <- func() {
+		f()
+		close(done)
+	}
+	<-done
 }
 
 func (w *Window) Resize(s Size) {
@@ -85,6 +96,8 @@ func windowLoop(window uintptr, ctx uintptr) {
 
 	for {
 		select {
+		case f := <-w.do:
+			f()
 		case s := <-w.sizeEvents:
 			w.size = s
 			w.Resize(s.size)

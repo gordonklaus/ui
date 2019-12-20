@@ -3,6 +3,7 @@ package ui
 type View interface {
 	SetParent(View)
 
+	Do(func())
 	Size() Size
 	Width() float64
 	Height() float64
@@ -26,6 +27,12 @@ type view struct {
 func NewView(v View) View {
 	return &view{
 		self: v,
+	}
+}
+
+func (v *view) Do(f func()) {
+	if v.parent != nil {
+		v.parent.Do(f)
 	}
 }
 
