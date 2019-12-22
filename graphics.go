@@ -1,23 +1,29 @@
 package ui
 
 import (
-	"fmt"
+	"encoding/binary"
 	"log"
 
-	gl "github.com/go-gl/gl/v3.2-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
+	"golang.org/x/mobile/exp/f32"
+	"golang.org/x/mobile/exp/gl/glutil"
+	"golang.org/x/mobile/gl"
 )
 
 type Graphics struct {
-	program uint32
-	mvp     int32
-	pos     uint32
-	color   uint32
+	glctx   gl.Context
+	program gl.Program
+	mvp     gl.Uniform
+	pos     gl.Attrib
+	color   gl.Attrib
 
 	proj, view mgl32.Mat4
 }
 
-func NewGraphics() *Graphics {
+func newGraphics(glctx gl.Context) *Graphics {
+	glctx.Enable(gl.BLEND)
+	glctx.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
 	const vertexShader = `#version 100
 		uniform mat4 mvp;
 		attribute vec2 pos;
@@ -27,7 +33,7 @@ func NewGraphics() *Graphics {
 		void main() {
 			gl_Position = mvp * vec4(pos, 0, 1);
 			vColor = color;
-		}` + "\x00"
+		}`
 
 	const fragmentShader = `#version 100
 		precision mediump float;
@@ -35,90 +41,28 @@ func NewGraphics() *Graphics {
 
 		void main() {
 			gl_FragColor = vColor;
-		}` + "\x00"
+		}`
 
-	program, err := createProgram(vertexShader, fragmentShader)
+	program, err := glutil.CreateProgram(glctx, vertexShader, fragmentShader)
 	if err != nil {
 		log.Fatalf("error creating GL program: %v", err)
 	}
 
-	mvp := gl.GetUniformLocation(program, gl.Str("mvp\x00"))
-	pos := uint32(gl.GetAttribLocation(program, gl.Str("pos\x00")))
-	color := uint32(gl.GetAttribLocation(program, gl.Str("color\x00")))
+	mvp := glctx.GetUniformLocation(program, "mvp")
+	pos := glctx.GetAttribLocation(program, "pos")
+	color := glctx.GetAttribLocation(program, "color")
 
-	g := &Graphics{
+	return &Graphics{
+		glctx:   glctx,
 		program: program,
 		mvp:     mvp,
 		pos:     pos,
 		color:   color,
 	}
-
-	// Using attribute arrays in OpenGL 3.3 requires the use of a vertex array.
-	var va uint32
-	gl.GenVertexArrays(1, &va)
-	gl.BindVertexArray(va)
-
-	return g
 }
 
-func createProgram(vertexSrc, fragmentSrc string) (uint32, error) {
-	program := gl.CreateProgram()
-	if program == 0 {
-		return 0, fmt.Errorf("no programs available")
-	}
-
-	vertexShader, err := loadShader(gl.VERTEX_SHADER, vertexSrc)
-	if err != nil {
-		return 0, err
-	}
-	fragmentShader, err := loadShader(gl.FRAGMENT_SHADER, fragmentSrc)
-	if err != nil {
-		gl.DeleteShader(vertexShader)
-		return 0, err
-	}
-
-	gl.AttachShader(program, vertexShader)
-	gl.AttachShader(program, fragmentShader)
-	gl.LinkProgram(program)
-
-	// Flag shaders for deletion when program is unlinked.
-	gl.DeleteShader(vertexShader)
-	gl.DeleteShader(fragmentShader)
-
-	var status int32
-	gl.GetProgramiv(program, gl.LINK_STATUS, &status)
-	if status == gl.FALSE {
-		defer gl.DeleteProgram(program)
-		// TODO: gl.GetProgramInfoLog
-		return 0, fmt.Errorf("error linking program")
-	}
-	return program, nil
-}
-
-func loadShader(shaderType uint32, src string) (uint32, error) {
-	shader := gl.CreateShader(shaderType)
-	if shader == 0 {
-		return 0, fmt.Errorf("could not create shader (type %v)", shaderType)
-	}
-	srcStr, free := gl.Strs(src)
-	defer free()
-	gl.ShaderSource(shader, 1, srcStr, nil)
-	gl.CompileShader(shader)
-
-	var status int32
-	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &status)
-	if status == gl.FALSE {
-		defer gl.DeleteShader(shader)
-		var buf [256]byte
-		var bufLen int32
-		gl.GetShaderInfoLog(shader, int32(len(buf)), &bufLen, &buf[0])
-		return 0, fmt.Errorf("error compiling shader: %s", string(buf[:bufLen]))
-	}
-	return shader, nil
-}
-
-func (g *Graphics) Release() {
-	gl.DeleteProgram(g.program)
+func (g *Graphics) release() {
+	g.glctx.DeleteProgram(g.program)
 }
 
 func (g *Graphics) Size(s Size) {
@@ -133,18 +77,24 @@ func (g *Graphics) Clip2World(x, y float32) (float32, float32) {
 	return v.X(), v.Y()
 }
 
+func (g *Graphics) clear() {
+	g.glctx.ClearColor(0, 0, 0, 1)
+	g.glctx.Clear(gl.COLOR_BUFFER_BIT)
+}
+
 func (g *Graphics) Draw(buffer *TriangleBuffer, model mgl32.Mat4) {
-	gl.UseProgram(g.program)
+	g.glctx.UseProgram(g.program)
 
 	mvp := g.proj.Mul4(g.view).Mul4(model)
-	gl.UniformMatrix4fv(g.mvp, 1, false, &mvp[0])
+	g.glctx.UniformMatrix4fv(g.mvp, mvp[:])
 
-	buffer.Draw(g.pos, g.color)
+	buffer.draw(g.pos, g.color)
 }
 
 type TriangleBuffer struct {
-	buffer uint32
-	length int32
+	gfx    *Graphics
+	buffer gl.Buffer
+	length int
 }
 
 type Triangle [3]Vertex
@@ -160,10 +110,7 @@ type Color struct {
 
 const coordsPerVertex = 6
 
-func NewTriangleBuffer(ts []Triangle) *TriangleBuffer {
-	var buffer uint32
-	gl.GenBuffers(1, &buffer)
-
+func NewTriangleBuffer(gfx *Graphics, ts []Triangle) *TriangleBuffer {
 	data := []float32{}
 	for _, t := range ts {
 		for _, v := range t {
@@ -177,22 +124,24 @@ func NewTriangleBuffer(ts []Triangle) *TriangleBuffer {
 			)
 		}
 	}
-	gl.BindBuffer(gl.ARRAY_BUFFER, buffer)
-	gl.BufferData(gl.ARRAY_BUFFER, 4*len(data), gl.Ptr(data), gl.STATIC_DRAW)
 
-	return &TriangleBuffer{buffer, int32(3 * len(ts))}
+	buffer := gfx.glctx.CreateBuffer()
+	gfx.glctx.BindBuffer(gl.ARRAY_BUFFER, buffer)
+	gfx.glctx.BufferData(gl.ARRAY_BUFFER, f32.Bytes(binary.LittleEndian, data...), gl.STATIC_DRAW)
+
+	return &TriangleBuffer{gfx, buffer, 3 * len(ts)}
 }
 
 func (b *TriangleBuffer) Release() {
-	gl.DeleteBuffers(1, &b.buffer)
+	b.gfx.glctx.DeleteBuffer(b.buffer)
 }
 
-func (b *TriangleBuffer) Draw(pos, color uint32) {
-	gl.BindBuffer(gl.ARRAY_BUFFER, b.buffer)
-	gl.VertexAttribPointer(pos, 2, gl.FLOAT, false, 4*coordsPerVertex, nil)
-	gl.EnableVertexAttribArray(pos)
-	gl.VertexAttribPointer(color, 4, gl.FLOAT, false, 4*coordsPerVertex, gl.PtrOffset(4*2))
-	gl.EnableVertexAttribArray(color)
+func (b *TriangleBuffer) draw(pos, color gl.Attrib) {
+	b.gfx.glctx.BindBuffer(gl.ARRAY_BUFFER, b.buffer)
+	b.gfx.glctx.VertexAttribPointer(pos, 2, gl.FLOAT, false, 4*coordsPerVertex, 0)
+	b.gfx.glctx.EnableVertexAttribArray(pos)
+	b.gfx.glctx.VertexAttribPointer(color, 4, gl.FLOAT, false, 4*coordsPerVertex, 4*2)
+	b.gfx.glctx.EnableVertexAttribArray(color)
 
-	gl.DrawArrays(gl.TRIANGLES, 0, b.length)
+	b.gfx.glctx.DrawArrays(gl.TRIANGLES, 0, b.length)
 }

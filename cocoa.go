@@ -51,7 +51,7 @@ func applicationDidFinishLaunching() {
 	go appCallback()
 }
 
-func newWindow(size Size) uintptr {
+func newWindowImpl(size Size) uintptr {
 	return uintptr(C.newWindow(C.double(size.Width), C.double(size.Height)))
 }
 
@@ -156,7 +156,7 @@ func cocoaMouseButton(button int32) PointerButtons {
 	}
 }
 
-func (w *Window) MapFromParent(p Position) Position {
+func (w *window) MapFromParent(p Position) Position {
 	pt := C.NSPoint{
 		x: C.double(p.X),
 		y: C.double(p.Y),
