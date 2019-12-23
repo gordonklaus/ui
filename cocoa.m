@@ -12,7 +12,6 @@
 void makeCurrentContext(uintptr_t context) {
 	id ctx = (NSOpenGLContext*)context;
 	[ctx makeCurrentContext];
-	[ctx performSelectorOnMainThread:@selector(update) withObject:nil waitUntilDone:YES];
 }
 
 void flushContext(uintptr_t context) {
