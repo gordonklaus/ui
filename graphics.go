@@ -68,13 +68,21 @@ func (g *Graphics) release() {
 func (g *Graphics) Size(s Size) {
 	w := float32(s.Width)
 	h := float32(s.Height)
-	g.proj = mgl32.Ortho2D(-w/2, w/2, -h/2, h/2)
-	g.view = mgl32.LookAt(w/2, h/2, 1, w/2, h/2, 0, 0, 1, 0)
+	g.proj = mgl32.Mat4{
+		2 / w, 0, 0, 0,
+		0, -2 / h, 0, 0,
+		0, 0, -1, 0,
+		-1, 1, -1, 1,
+	}
 }
 
-func (g *Graphics) Clip2World(x, y float32) (float32, float32) {
-	v := g.proj.Mul4(g.view).Inv().Mul4x1(mgl32.Vec4{x, y, 0, 1})
-	return v.X(), v.Y()
+func (g *Graphics) setViewTransform(t transform) {
+	g.view = mgl32.Mat4{
+		float32(t.scaleX), 0, 0, 0,
+		0, float32(t.scaleY), 0, 0,
+		0, 0, 1, 0,
+		float32(t.translateX), float32(t.translateY), 0, 1,
+	}
 }
 
 func (g *Graphics) clear() {

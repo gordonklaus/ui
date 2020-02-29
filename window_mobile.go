@@ -18,14 +18,11 @@ import (
 var theWindow *window
 
 type window struct {
-	View
-	theView    View
-	do         chan func()
+	*windowBase
 	drawEvents chan drawEvent
 
 	app         app.App
 	pixelsPerPt float32
-	gfx         *Graphics
 	pointers    map[touch.Sequence]*Pointer
 }
 
@@ -37,26 +34,15 @@ func newWindow(size Size, v View) (Window, error) {
 	}
 
 	w := &window{
-		theView:    v,
-		do:         make(chan func()),
 		drawEvents: make(chan drawEvent, 1),
 		pointers:   map[touch.Sequence]*Pointer{},
 	}
-	w.View = NewView(w)
+	w.windowBase = newWindowBase(w, v)
 	v.SetParent(w)
 
 	theWindow = w
 
 	return w, nil
-}
-
-func (w *window) Do(f func()) {
-	done := make(chan struct{})
-	w.do <- func() {
-		f()
-		close(done)
-	}
-	<-done
 }
 
 func (w *window) Resize(s Size) {
@@ -115,8 +101,7 @@ func (w *window) handleEvents() {
 				})
 			case paint.Event:
 				if w.gfx != nil {
-					w.gfx.clear()
-					w.theView.Draw(w.gfx)
+					w.windowBase.draw()
 					w.app.Publish()
 				}
 			case touch.Event:
@@ -129,7 +114,7 @@ func (w *window) handleEvents() {
 func (w *window) handleTouchEvent(e touch.Event) {
 	pos := Position{
 		X: ptToMM(geom.Pt(e.X / w.pixelsPerPt)),
-		Y: w.Height() - ptToMM(geom.Pt(e.Y/w.pixelsPerPt)),
+		Y: ptToMM(geom.Pt(e.Y / w.pixelsPerPt)),
 	}
 
 	switch e.Type {
@@ -143,13 +128,13 @@ func (w *window) handleTouchEvent(e touch.Event) {
 		}
 		w.pointers[e.Sequence] = p
 
-		w.theView.PointerDown(*p)
+		w.windowBase.pointerDown(*p)
 	case touch.TypeMove:
 		p := w.pointers[e.Sequence]
 		p.Position = pos
 		p.Button = PointerButtonNone
 
-		w.theView.PointerMove(*p)
+		w.windowBase.pointerMove(*p)
 	case touch.TypeEnd:
 		p := w.pointers[e.Sequence]
 		p.Position = pos
@@ -157,7 +142,7 @@ func (w *window) handleTouchEvent(e touch.Event) {
 		p.Buttons = PointerButtonNone
 		delete(w.pointers, e.Sequence)
 
-		w.theView.PointerUp(*p)
+		w.windowBase.pointerUp(*p)
 	}
 }
 

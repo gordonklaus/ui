@@ -17,11 +17,8 @@ var (
 )
 
 type window struct {
-	View
+	*windowBase
 	w             uintptr
-	theView       View
-	gfx           *Graphics
-	do            chan func()
 	sizeEvents    chan sizeEvent
 	drawEvents    chan drawEvent
 	pointerEvents chan pointerEvent
@@ -43,13 +40,11 @@ type pointerEvent struct {
 func newWindow(size Size, v View) (Window, error) {
 	w := &window{
 		w:             newWindowImpl(size),
-		theView:       v,
-		do:            make(chan func()),
 		sizeEvents:    make(chan sizeEvent, 1),
 		drawEvents:    make(chan drawEvent, 1),
 		pointerEvents: make(chan pointerEvent, 1),
 	}
-	w.View = NewView(w)
+	w.windowBase = newWindowBase(w, v)
 	v.SetParent(w)
 
 	windowsMu.Lock()
@@ -57,15 +52,6 @@ func newWindow(size Size, v View) (Window, error) {
 	windowsMu.Unlock()
 
 	return w, nil
-}
-
-func (w *window) Do(f func()) {
-	done := make(chan struct{})
-	w.do <- func() {
-		f()
-		close(done)
-	}
-	<-done
 }
 
 func (w *window) Resize(s Size) {
@@ -108,18 +94,18 @@ func windowLoop(window uintptr, ctx uintptr) {
 			w.size = s
 			w.Resize(s.size)
 		case <-w.drawEvents:
-			w.gfx.clear()
-			w.theView.Draw(w.gfx)
+			w.windowBase.draw()
 			flushContext(ctx)
 		case p := <-w.pointerEvents:
 			p.p.X *= w.size.px.Width
 			p.p.Y *= w.size.px.Height
+			p.p.Y = w.size.size.Height - p.p.Y
 			if p.down {
-				w.theView.PointerDown(p.p)
+				w.windowBase.pointerDown(p.p)
 			} else if p.up {
-				w.theView.PointerUp(p.p)
+				w.windowBase.pointerUp(p.p)
 			} else {
-				w.theView.PointerMove(p.p)
+				w.windowBase.pointerMove(p.p)
 			}
 		}
 	}
